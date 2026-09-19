@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   ShieldAlert,
   ShieldCheck,
@@ -19,30 +19,72 @@ import {
   Info,
   Sliders,
   Radio,
-  Sparkles
+  Sparkles,
+  Download,
+  FileSpreadsheet,
+  LogOut,
+  Bell,
+  Smartphone,
+  CheckCircle2,
+  XCircle,
+  SlidersHorizontal,
+  Flame,
+  Award
 } from 'lucide-react';
+
+import LoginPage from './components/LoginPage';
+import ProfileView from './components/ProfileView';
+import Toast from './components/Toast';
 
 const API_BASE_URL = 'http://127.0.0.1:8000';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('overview'); // overview, tester, transactions, calls
+  // Authentication State
+  const [currentUser, setCurrentUser] = useState({
+    name: 'Vedant Patil',
+    email: 'vedant.patil@aegisx.ai',
+    role: 'Lead Fraud Analyst',
+    clearance: 'Tier-3 Master Analyst',
+    avatar: 'VP',
+    loginTime: '19:30 PM'
+  });
+
+  // Active Navigation Tab: overview, tester, transactions, calls, profile
+  const [activeTab, setActiveTab] = useState('overview');
+
+  // Global Toast & Notification System State
+  const [toast, setToast] = useState(null);
+  const showToast = (toastObj) => {
+    setToast(toastObj);
+    setTimeout(() => {
+      setToast(null);
+    }, 4500);
+  };
+
+  // Live Auto-Poll & API Connection State
   const [apiOnline, setApiOnline] = useState(false);
+  const [autoPollEnabled, setAutoPollEnabled] = useState(true);
   const [summary, setSummary] = useState(null);
   const [loadingSummary, setLoadingSummary] = useState(true);
+
+  // User Action Tracking States
+  const [frozenAccounts, setFrozenAccounts] = useState(new Set());
+  const [escalatedTxns, setEscalatedTxns] = useState(new Set());
+  const [verdictOverrides, setVerdictOverrides] = useState({});
 
   // Transactions State
   const [transactions, setTransactions] = useState([]);
   const [loadingTxns, setLoadingTxns] = useState(false);
   const [expandedTxnId, setExpandedTxnId] = useState(null);
   const [txnSearch, setTxnSearch] = useState('');
-  const [filterFlagged, setFilterFlagged] = useState(false);
+  const [filterRiskLevel, setFilterRiskLevel] = useState('ALL'); // ALL, HIGH, MEDIUM, LOW, FLAGGED
 
   // Calls State
   const [calls, setCalls] = useState([]);
   const [loadingCalls, setLoadingCalls] = useState(false);
   const [callSearch, setCallSearch] = useState('');
 
-  // Tester State
+  // Transaction Tester Form State
   const [testTxnForm, setTestTxnForm] = useState({
     step: 3,
     type: 'TRANSFER',
@@ -58,15 +100,18 @@ export default function App() {
   const [scoringResult, setScoringResult] = useState(null);
   const [scoringLoading, setScoringLoading] = useState(false);
 
-  // Call Tester State
+  // Call Tester Form State
   const [testCallForm, setTestCallForm] = useState({
-    caller_identity: 'HDFC Bank Security Desk',
+    caller_identity: 'HDFC Bank Fraud Security',
     phone_number: '+91-9876543210',
     duration_sec: 140,
     transcript: 'URGENT: This is Bank Fraud Security. Your account has been compromised. Share your 6-digit OTP code immediately to halt unauthorized transfer.'
   });
   const [callResult, setCallResult] = useState(null);
   const [callLoading, setCallLoading] = useState(false);
+
+  // User Dropdown Menu state in Header
+  const [showUserDropdown, setShowUserDropdown] = useState(false);
 
   // Fetch Dashboard Summary
   const fetchSummary = async () => {
@@ -90,7 +135,7 @@ export default function App() {
   const fetchTransactions = async () => {
     setLoadingTxns(true);
     try {
-      const url = filterFlagged
+      const url = filterRiskLevel === 'FLAGGED'
         ? `${API_BASE_URL}/transactions?flagged_only=true`
         : `${API_BASE_URL}/transactions`;
       const res = await fetch(url);
@@ -121,13 +166,24 @@ export default function App() {
     }
   };
 
+  // Initial fetch and auto-poll effect
   useEffect(() => {
     fetchSummary();
     fetchTransactions();
     fetchCalls();
-  }, [filterFlagged]);
+  }, [filterRiskLevel]);
 
-  // Handle Submit Transaction Score
+  useEffect(() => {
+    if (!autoPollEnabled) return;
+    const interval = setInterval(() => {
+      fetchSummary();
+      fetchTransactions();
+      fetchCalls();
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [autoPollEnabled, filterRiskLevel]);
+
+  // Submit Transaction Score
   const handleScoreTransaction = async (e) => {
     if (e) e.preventDefault();
     setScoringLoading(true);
@@ -143,15 +199,21 @@ export default function App() {
         setScoringResult(data);
         fetchSummary();
         fetchTransactions();
+        showToast({
+          type: data.risk_level === 'HIGH' ? 'danger' : 'success',
+          title: `Transaction Scored: ${data.risk_level}`,
+          message: `Score ${(data.fraud_probability * 100).toFixed(1)}% • ${data.verdict}`
+        });
       }
     } catch (err) {
       console.error("Scoring error:", err);
+      showToast({ type: 'error', title: 'Scoring Error', message: 'Failed to connect to backend' });
     } finally {
       setScoringLoading(false);
     }
   };
 
-  // Handle Submit Call Score
+  // Submit Call Score
   const handleScoreCall = async (e) => {
     if (e) e.preventDefault();
     setCallLoading(true);
@@ -167,15 +229,21 @@ export default function App() {
         setCallResult(data);
         fetchSummary();
         fetchCalls();
+        showToast({
+          type: data.scam_score >= 0.7 ? 'danger' : 'success',
+          title: `Voice Transcript Scored: ${data.risk_level}`,
+          message: `${data.primary_reason}`
+        });
       }
     } catch (err) {
       console.error("Call scoring error:", err);
+      showToast({ type: 'error', title: 'Scam Call Scoring Error', message: 'Failed to connect to backend' });
     } finally {
       setCallLoading(false);
     }
   };
 
-  // Preset Handlers
+  // Preset Handlers for Transaction Testing
   const applyTxnPreset = (preset) => {
     if (preset === 'high_risk') {
       setTestTxnForm({
@@ -190,6 +258,7 @@ export default function App() {
         newbalanceDest: 0.0,
         account_age_days: 5
       });
+      showToast({ type: 'info', title: 'Preset Applied', message: 'Loaded High-Risk Mule Account Drain Scenario' });
     } else if (preset === 'legit') {
       setTestTxnForm({
         step: 14,
@@ -203,6 +272,7 @@ export default function App() {
         newbalanceDest: 120032.50,
         account_age_days: 420
       });
+      showToast({ type: 'info', title: 'Preset Applied', message: 'Loaded Legitimate Merchant Payment Scenario' });
     } else if (preset === 'cashout_fraud') {
       setTestTxnForm({
         step: 2,
@@ -216,9 +286,25 @@ export default function App() {
         newbalanceDest: 0.0,
         account_age_days: 14
       });
+      showToast({ type: 'info', title: 'Preset Applied', message: 'Loaded Rapid Cash-Out Anomaly Scenario' });
+    } else if (preset === 'carding_test') {
+      setTestTxnForm({
+        step: 1,
+        type: 'PAYMENT',
+        amount: 1.00,
+        nameOrig: 'C77889900',
+        oldbalanceOrg: 15.00,
+        newbalanceOrig: 14.00,
+        nameDest: 'M10203040',
+        oldbalanceDest: 0.0,
+        newbalanceDest: 1.00,
+        account_age_days: 1
+      });
+      showToast({ type: 'info', title: 'Preset Applied', message: 'Loaded Micro Carding Probe Scenario' });
     }
   };
 
+  // Preset Handlers for Call Testing
   const applyCallPreset = (preset) => {
     if (preset === 'otp_phishing') {
       setTestCallForm({
@@ -227,6 +313,7 @@ export default function App() {
         duration_sec: 120,
         transcript: 'URGENT: This is Bank Fraud Security. Your account has been compromised. Share your 6-digit OTP code immediately to halt unauthorized transfer.'
       });
+      showToast({ type: 'info', title: 'Call Preset Loaded', message: 'OTP Phishing Urgent Threat Scenario' });
     } else if (preset === 'legit_call') {
       setTestCallForm({
         caller_identity: 'Local Branch Agent',
@@ -234,6 +321,7 @@ export default function App() {
         duration_sec: 60,
         transcript: 'Good morning, this is customer service confirming your appointment for tomorrow at 2 PM at the main branch.'
       });
+      showToast({ type: 'info', title: 'Call Preset Loaded', message: 'Normal Customer Service Appointment Call' });
     } else if (preset === 'impersonation_threat') {
       setTestCallForm({
         caller_identity: 'Police Inspector Legal Desk',
@@ -241,7 +329,131 @@ export default function App() {
         duration_sec: 240,
         transcript: 'This is an urgent call from Police Cyber Cell. An arrest warrant has been issued in your name. You must immediately wire transfer penalty fees to our safe treasury account.'
       });
+      showToast({ type: 'info', title: 'Call Preset Loaded', message: 'Police Law Enforcement Impersonation Threat' });
+    } else if (preset === 'sim_swap') {
+      setTestCallForm({
+        caller_identity: 'Telecom Network Desk',
+        phone_number: '+91-9700112233',
+        duration_sec: 180,
+        transcript: 'Your SIM card upgrade to 5G is pending. Please reply with the SMS verification pin sent to your mobile handset to maintain cellular service.'
+      });
+      showToast({ type: 'info', title: 'Call Preset Loaded', message: 'SIM Swap Social Engineering Scam' });
     }
+  };
+
+  // Quick Action Buttons Logic
+  const handleFreezeAccount = (accId) => {
+    setFrozenAccounts(prev => {
+      const updated = new Set(prev);
+      if (updated.has(accId)) {
+        updated.delete(accId);
+        showToast({ type: 'info', title: 'Account Unfrozen', message: `Account ${accId} active status restored.` });
+      } else {
+        updated.add(accId);
+        showToast({ type: 'danger', title: 'Account Frozen', message: `Account ${accId} blocked across all payment rails.` });
+      }
+      return updated;
+    });
+  };
+
+  const handleEscalateTxn = (txnId) => {
+    setEscalatedTxns(prev => {
+      const updated = new Set(prev);
+      updated.add(txnId);
+      return updated;
+    });
+    showToast({ type: 'warning', title: 'Case Escalated', message: `Transaction ${txnId} dispatched to Cyber Crime Unit.` });
+  };
+
+  const handleToggleVerdict = (txnId) => {
+    setVerdictOverrides(prev => {
+      const current = prev[txnId];
+      const nextVerdict = current === 'FALSE_POSITIVE' ? 'CONFIRMED_FRAUD' : 'FALSE_POSITIVE';
+      showToast({
+        type: 'success',
+        title: 'Verdict Recalibrated',
+        message: `Transaction ${txnId} verdict set to ${nextVerdict}`
+      });
+      return { ...prev, [txnId]: nextVerdict };
+    });
+  };
+
+  const handleRequest2FA = (accId) => {
+    showToast({
+      type: 'info',
+      title: '2FA Verification Requested',
+      message: `Step-Up authentication prompt sent to phone registered with account ${accId}.`
+    });
+  };
+
+  const handleSendAlertSMS = (accId) => {
+    showToast({
+      type: 'success',
+      title: 'Emergency SMS Dispatched',
+      message: `Fraud alert SMS sent to customer owning account ${accId}.`
+    });
+  };
+
+  // CSV Exporter Functions
+  const exportTransactionsCSV = () => {
+    if (!transactions || transactions.length === 0) return;
+    const headers = ["ID", "Time_Step", "Type", "Amount", "Sender", "Recipient", "Fraud_Probability", "Risk_Level", "Verdict"];
+    const rows = transactions.map(t => [
+      t.id,
+      t.step,
+      t.type,
+      t.amount,
+      t.nameOrig,
+      t.nameDest,
+      t.fraud_probability,
+      t.risk_level,
+      t.verdict
+    ]);
+
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `aegisx_scored_transactions_${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    showToast({ type: 'success', title: 'Export Complete', message: 'Downloaded Scored Transactions CSV report.' });
+  };
+
+  const exportCallsCSV = () => {
+    if (!calls || calls.length === 0) return;
+    const headers = ["ID", "Caller_Identity", "Phone_Number", "Scam_Score", "Risk_Level", "Primary_Reason", "Transcript"];
+    const rows = calls.map(c => [
+      c.id,
+      `"${c.caller_identity}"`,
+      `"${c.phone_number}"`,
+      c.scam_score,
+      c.risk_level,
+      `"${c.primary_reason}"`,
+      `"${c.transcript.replace(/"/g, '""')}"`
+    ]);
+
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `aegisx_voice_scam_calls_${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    showToast({ type: 'success', title: 'Export Complete', message: 'Downloaded Voice Scam Call Logs CSV.' });
+  };
+
+  const exportSHAPReportJSON = (txn) => {
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(txn, null, 2));
+    const downloadAnchor = document.createElement('a');
+    downloadAnchor.setAttribute("href", dataStr);
+    downloadAnchor.setAttribute("download", `SHAP_Audit_${txn.id}.json`);
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+    showToast({ type: 'info', title: 'SHAP Report Exported', message: `Downloaded forensic JSON audit for ${txn.id}.` });
   };
 
   // Utility badge styling
@@ -255,18 +467,36 @@ export default function App() {
     }
   };
 
-  const filteredTransactions = transactions.filter(t => 
-    t.id.toLowerCase().includes(txnSearch.toLowerCase()) ||
-    t.type.toLowerCase().includes(txnSearch.toLowerCase()) ||
-    t.nameOrig.toLowerCase().includes(txnSearch.toLowerCase()) ||
-    t.nameDest.toLowerCase().includes(txnSearch.toLowerCase())
-  );
+  // Filter transactions
+  const filteredTransactions = transactions.filter(t => {
+    const matchesSearch = t.id.toLowerCase().includes(txnSearch.toLowerCase()) ||
+      t.type.toLowerCase().includes(txnSearch.toLowerCase()) ||
+      t.nameOrig.toLowerCase().includes(txnSearch.toLowerCase()) ||
+      t.nameDest.toLowerCase().includes(txnSearch.toLowerCase());
+
+    if (!matchesSearch) return false;
+    if (filterRiskLevel === 'HIGH') return t.risk_level === 'HIGH' || t.fraud_probability >= 0.70;
+    if (filterRiskLevel === 'MEDIUM') return t.risk_level === 'MEDIUM' || (t.fraud_probability >= 0.40 && t.fraud_probability < 0.70);
+    if (filterRiskLevel === 'LOW') return t.risk_level === 'LOW' || t.fraud_probability < 0.40;
+    return true;
+  });
+
+  // Render Login Page if logged out
+  if (!currentUser) {
+    return <LoginPage onLogin={(user) => { setCurrentUser(user); showToast({ type: 'success', title: 'Welcome', message: `Signed in as ${user.name}` }); }} />;
+  }
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#0b0f19]">
+    <div className="min-h-screen flex flex-col bg-[#0b0f19] text-slate-100 font-sans">
+      
+      {/* Toast Notification Container */}
+      <Toast toast={toast} onClose={() => setToast(null)} />
+
       {/* Header Bar */}
-      <header className="border-b border-slate-800 bg-[#0f172a]/80 backdrop-blur-md sticky top-0 z-40">
+      <header className="border-b border-slate-800 bg-[#0f172a]/90 backdrop-blur-md sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+          
+          {/* Logo & System Title */}
           <div className="flex items-center space-x-3">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-purple-500 flex items-center justify-center shadow-lg shadow-indigo-500/30">
               <ShieldAlert className="w-6 h-6 text-white" />
@@ -279,24 +509,84 @@ export default function App() {
             </div>
           </div>
 
-          <div className="flex items-center space-x-4">
-            {/* Status indicator */}
-            <div className="flex items-center space-x-2 bg-slate-900/60 px-3 py-1.5 rounded-lg border border-slate-800 text-xs">
-              <span className={`w-2 h-2 rounded-full ${apiOnline ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'}`}></span>
-              <span className="text-slate-300 font-medium">{apiOnline ? 'FastAPI + XGBoost Online' : 'Backend Connecting...'}</span>
-            </div>
-
+          {/* Header Controls: Live Poll Status, Refresh, User Profile Menu */}
+          <div className="flex items-center space-x-3">
+            
+            {/* Auto-poll Toggle Button */}
             <button
-              onClick={() => { fetchSummary(); fetchTransactions(); fetchCalls(); }}
+              onClick={() => {
+                setAutoPollEnabled(!autoPollEnabled);
+                showToast({ type: 'info', title: 'Live Poll Toggled', message: `Auto-refresh ${!autoPollEnabled ? 'enabled (every 5s)' : 'paused'}` });
+              }}
+              className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${
+                autoPollEnabled
+                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/20'
+                  : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'
+              }`}
+            >
+              <span className={`w-2 h-2 rounded-full ${apiOnline && autoPollEnabled ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`}></span>
+              <span>{autoPollEnabled ? 'Live Sync Active' : 'Live Sync Paused'}</span>
+            </button>
+
+            {/* Refresh Button */}
+            <button
+              onClick={() => { fetchSummary(); fetchTransactions(); fetchCalls(); showToast({ type: 'success', title: 'Refreshed', message: 'Updated records from database' }); }}
               className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
               title="Refresh Data"
             >
               <RefreshCw className="w-4 h-4" />
             </button>
+
+            {/* User Profile Menu Button */}
+            <div className="relative">
+              <button
+                onClick={() => setShowUserDropdown(!showUserDropdown)}
+                className="flex items-center space-x-2.5 p-1.5 pl-2.5 rounded-xl bg-slate-900 border border-slate-800 hover:border-indigo-500/50 transition-all text-left"
+              >
+                <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-indigo-500 to-purple-600 text-white font-extrabold text-xs flex items-center justify-center">
+                  {currentUser.avatar}
+                </div>
+                <div className="hidden sm:block">
+                  <div className="text-xs font-bold text-white leading-tight">{currentUser.name}</div>
+                  <div className="text-[10px] text-indigo-400 leading-tight">{currentUser.role}</div>
+                </div>
+                <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+              </button>
+
+              {/* Dropdown Menu */}
+              {showUserDropdown && (
+                <div className="absolute right-0 mt-2 w-56 rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl p-2 space-y-1 z-50">
+                  <div className="p-3 rounded-xl bg-slate-950 border border-slate-800/80 mb-1">
+                    <div className="text-xs font-bold text-white">{currentUser.name}</div>
+                    <div className="text-[11px] text-slate-400">{currentUser.email}</div>
+                    <div className="mt-1.5 inline-block text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                      {currentUser.clearance}
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => { setActiveTab('profile'); setShowUserDropdown(false); }}
+                    className="w-full text-left px-3 py-2 rounded-xl text-xs text-slate-300 hover:bg-slate-800 hover:text-white flex items-center space-x-2 transition-colors font-semibold"
+                  >
+                    <User className="w-4 h-4 text-indigo-400" />
+                    <span>View Analyst Profile</span>
+                  </button>
+
+                  <button
+                    onClick={() => { setCurrentUser(null); setShowUserDropdown(false); showToast({ type: 'info', title: 'Signed Out', message: 'You have logged out of AegisX' }); }}
+                    className="w-full text-left px-3 py-2 rounded-xl text-xs text-rose-300 hover:bg-rose-500/10 flex items-center space-x-2 transition-colors font-semibold"
+                  >
+                    <LogOut className="w-4 h-4 text-rose-400" />
+                    <span>Sign Out</span>
+                  </button>
+                </div>
+              )}
+            </div>
+
           </div>
         </div>
 
-        {/* Navigation Tabs */}
+        {/* Navigation Tabs Header */}
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex space-x-6 border-t border-slate-800/60 text-sm font-medium">
           <button
             onClick={() => setActiveTab('overview')}
@@ -309,6 +599,7 @@ export default function App() {
             <Activity className="w-4 h-4" />
             <span>Dashboard Overview</span>
           </button>
+          
           <button
             onClick={() => setActiveTab('tester')}
             className={`py-3 border-b-2 flex items-center space-x-2 transition-colors ${
@@ -320,6 +611,7 @@ export default function App() {
             <Zap className="w-4 h-4" />
             <span>Test a Transaction (SHAP)</span>
           </button>
+
           <button
             onClick={() => setActiveTab('transactions')}
             className={`py-3 border-b-2 flex items-center space-x-2 transition-colors ${
@@ -331,6 +623,7 @@ export default function App() {
             <ShieldCheck className="w-4 h-4" />
             <span>Scored Transactions</span>
           </button>
+
           <button
             onClick={() => setActiveTab('calls')}
             className={`py-3 border-b-2 flex items-center space-x-2 transition-colors ${
@@ -342,21 +635,34 @@ export default function App() {
             <PhoneCall className="w-4 h-4" />
             <span>Voice Scam Inspector</span>
           </button>
+
+          <button
+            onClick={() => setActiveTab('profile')}
+            className={`py-3 border-b-2 flex items-center space-x-2 transition-colors ${
+              activeTab === 'profile'
+                ? 'border-indigo-500 text-indigo-400 font-semibold'
+                : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <User className="w-4 h-4" />
+            <span>Analyst Profile</span>
+          </button>
         </div>
       </header>
 
-      {/* Main Container */}
+      {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
         
         {/* TAB 1: OVERVIEW */}
         {activeTab === 'overview' && (
           <div className="space-y-8">
-            {/* Project Banner */}
+            
+            {/* Project Hero Banner */}
             <div className="glass-card p-6 rounded-2xl relative overflow-hidden border border-indigo-500/20 bg-gradient-to-r from-indigo-950/40 via-slate-900 to-purple-950/30">
               <div className="max-w-3xl space-y-2 relative z-10">
                 <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-indigo-500/10 text-indigo-300 border border-indigo-500/30 text-xs font-semibold">
                   <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-                  <span>XGBoost + SHAP TreeExplainer Engine</span>
+                  <span>XGBoost + SHAP TreeExplainer Engine Active</span>
                 </div>
                 <h2 className="text-2xl font-extrabold text-white tracking-tight">
                   Explainable Real-Time Fraud Detection for GenAI Financial Threats
@@ -432,92 +738,145 @@ export default function App() {
               </div>
             </div>
 
-            {/* Recent Critical Alerts */}
+            {/* Quick Actions & Recent Alerts */}
             <div className="glass-card rounded-2xl border border-slate-800 p-6 space-y-4">
               <div className="flex items-center justify-between">
                 <h3 className="text-lg font-bold text-white flex items-center gap-2">
                   <ShieldAlert className="w-5 h-5 text-rose-400" />
                   Recent High-Risk Transaction Alerts & Explanations
                 </h3>
-                <button
-                  onClick={() => setActiveTab('transactions')}
-                  className="text-xs text-indigo-400 hover:text-indigo-300 font-semibold flex items-center gap-1"
-                >
-                  View All <ArrowUpRight className="w-3.5 h-3.5" />
-                </button>
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={exportTransactionsCSV}
+                    className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-indigo-300 flex items-center gap-1.5 transition-colors border border-slate-700"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Export CSV</span>
+                  </button>
+
+                  <button
+                    onClick={() => setActiveTab('transactions')}
+                    className="text-xs text-indigo-400 hover:text-indigo-300 font-semibold flex items-center gap-1"
+                  >
+                    View All <ArrowUpRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
 
               <div className="space-y-3">
-                {summary?.recent_alerts?.length > 0 ? (
-                  summary.recent_alerts.map((alert) => (
-                    <div
-                      key={alert.id}
-                      className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 hover:border-slate-700 transition-colors flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
-                    >
-                      <div className="space-y-1">
-                        <div className="flex items-center space-x-3">
-                          <span className="font-mono text-xs text-indigo-300 font-semibold">{alert.id}</span>
-                          <span className="text-xs font-semibold px-2 py-0.5 rounded bg-slate-800 text-slate-300">{alert.type}</span>
-                          <span className="text-sm font-bold text-white">${alert.amount.toLocaleString()}</span>
-                        </div>
-                        <p className="text-xs text-slate-300 font-medium flex items-center gap-1.5">
-                          <span className="w-1.5 h-1.5 rounded-full bg-rose-400"></span>
-                          <span className="text-rose-200">{alert.primary_explanation}</span>
-                        </p>
+                {transactions.slice(0, 3).map((t) => (
+                  <div key={t.id} className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 space-y-3">
+                    <div className="flex items-center justify-between text-xs">
+                      <div className="flex items-center space-x-3">
+                        <span className="font-mono text-slate-400 font-bold">{t.id}</span>
+                        <span className="px-2 py-0.5 rounded bg-slate-800 font-semibold text-white">{t.type}</span>
+                        <span className="font-mono text-white font-bold">${t.amount?.toLocaleString()}</span>
                       </div>
-
-                      <div className="flex items-center space-x-3 self-end sm:self-center">
-                        <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-rose-500/10 text-rose-400 border border-rose-500/20">
-                          { (alert.risk_score * 100).toFixed(1) }% RISK
-                        </span>
-                      </div>
+                      <div>{getRiskBadge(t.risk_level, t.fraud_probability)}</div>
                     </div>
-                  ))
-                ) : (
-                  <p className="text-xs text-slate-400 italic">No recent fraud alerts.</p>
-                )}
+
+                    <div className="p-3 rounded-lg bg-slate-950 border border-indigo-500/20 text-xs text-slate-300 space-y-1">
+                      <p className="font-semibold text-indigo-300">SHAP Explanation:</p>
+                      {t.explanations?.map((exp, idx) => (
+                        <p key={idx} className="text-slate-300">• {exp}</p>
+                      ))}
+                    </div>
+
+                    {/* Interactive Action Buttons */}
+                    <div className="flex flex-wrap gap-2 pt-1 border-t border-slate-800/80">
+                      <button
+                        onClick={() => handleFreezeAccount(t.nameOrig)}
+                        className={`text-xs px-2.5 py-1 rounded font-semibold transition-colors flex items-center gap-1 ${
+                          frozenAccounts.has(t.nameOrig)
+                            ? 'bg-rose-600 text-white'
+                            : 'bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                        }`}
+                      >
+                        <ShieldAlert className="w-3 h-3" />
+                        {frozenAccounts.has(t.nameOrig) ? 'Account Frozen' : 'Freeze Sender Account'}
+                      </button>
+
+                      <button
+                        onClick={() => handleEscalateTxn(t.id)}
+                        className={`text-xs px-2.5 py-1 rounded font-semibold transition-colors flex items-center gap-1 ${
+                          escalatedTxns.has(t.id)
+                            ? 'bg-purple-600 text-white'
+                            : 'bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                        }`}
+                      >
+                        <Send className="w-3 h-3" />
+                        {escalatedTxns.has(t.id) ? 'Escalated to Cyber Cell' : 'Escalate Alert'}
+                      </button>
+
+                      <button
+                        onClick={() => handleRequest2FA(t.nameOrig)}
+                        className="text-xs px-2.5 py-1 rounded font-semibold bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 transition-colors flex items-center gap-1"
+                      >
+                        <Smartphone className="w-3 h-3" />
+                        <span>Request 2FA</span>
+                      </button>
+
+                      <button
+                        onClick={() => handleSendAlertSMS(t.nameOrig)}
+                        className="text-xs px-2.5 py-1 rounded font-semibold bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 transition-colors flex items-center gap-1"
+                      >
+                        <CheckCircle2 className="w-3 h-3" />
+                        <span>Send Alert SMS</span>
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
         )}
 
-        {/* TAB 2: LIVE TESTER */}
+        {/* TAB 2: TEST A TRANSACTION */}
         {activeTab === 'tester' && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-            {/* Form Input */}
             <div className="lg:col-span-6 space-y-6">
               <div className="glass-card p-6 rounded-2xl border border-slate-800 space-y-6">
                 <div>
                   <h3 className="text-lg font-bold text-white flex items-center gap-2">
                     <Zap className="w-5 h-5 text-indigo-400" />
-                    Transaction Fraud Simulator
+                    Transaction Simulator & SHAP Explainer
                   </h3>
-                  <p className="text-xs text-slate-400">Input custom parameters or select a test scenario preset.</p>
+                  <p className="text-xs text-slate-400">Simulate financial transaction parameters to view sub-second XGBoost fraud scoring & SHAP feature attributions.</p>
                 </div>
 
-                {/* Preset Buttons */}
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => applyTxnPreset('high_risk')}
-                    className="text-xs px-3 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 transition-colors font-medium"
-                  >
-                    🚨 Preset 1: High-Risk $950k (3 AM)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => applyTxnPreset('cashout_fraud')}
-                    className="text-xs px-3 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 transition-colors font-medium"
-                  >
-                    ⚠️ Preset 2: Cash-Out Anomaly
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => applyTxnPreset('legit')}
-                    className="text-xs px-3 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 transition-colors font-medium"
-                  >
-                    ✅ Preset 3: Normal Payment ($32.50)
-                  </button>
+                {/* Preset Scenario Buttons */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-indigo-300 uppercase tracking-wider block">Quick Presets:</label>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => applyTxnPreset('high_risk')}
+                      className="text-xs px-2.5 py-1 rounded bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 font-semibold transition-colors"
+                    >
+                      🚨 Mule Account Drain
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applyTxnPreset('cashout_fraud')}
+                      className="text-xs px-2.5 py-1 rounded bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold transition-colors"
+                    >
+                      ⚠️ Rapid Cash Out
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applyTxnPreset('carding_test')}
+                      className="text-xs px-2.5 py-1 rounded bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 border border-purple-500/30 font-semibold transition-colors"
+                    >
+                      💳 Micro Carding Test
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applyTxnPreset('legit')}
+                      className="text-xs px-2.5 py-1 rounded bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-semibold transition-colors"
+                    >
+                      ✅ Merchant Payment
+                    </button>
+                  </div>
                 </div>
 
                 <form onSubmit={handleScoreTransaction} className="space-y-4">
@@ -527,7 +886,7 @@ export default function App() {
                       <select
                         value={testTxnForm.type}
                         onChange={(e) => setTestTxnForm({...testTxnForm, type: e.target.value})}
-                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
                       >
                         <option value="TRANSFER">TRANSFER</option>
                         <option value="CASH_OUT">CASH_OUT</option>
@@ -544,12 +903,22 @@ export default function App() {
                         step="0.01"
                         value={testTxnForm.amount}
                         onChange={(e) => setTestTxnForm({...testTxnForm, amount: parseFloat(e.target.value) || 0})}
-                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500 font-mono"
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-indigo-500"
                       />
                     </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-xs font-semibold text-slate-300 block mb-1">Sender Account ID</label>
+                      <input
+                        type="text"
+                        value={testTxnForm.nameOrig}
+                        onChange={(e) => setTestTxnForm({...testTxnForm, nameOrig: e.target.value})}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-indigo-500"
+                      />
+                    </div>
+
                     <div>
                       <label className="text-xs font-semibold text-slate-300 block mb-1">Sender Old Balance ($)</label>
                       <input
@@ -557,64 +926,29 @@ export default function App() {
                         step="0.01"
                         value={testTxnForm.oldbalanceOrg}
                         onChange={(e) => setTestTxnForm({...testTxnForm, oldbalanceOrg: parseFloat(e.target.value) || 0})}
-                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500 font-mono"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="text-xs font-semibold text-slate-300 block mb-1">Sender New Balance ($)</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={testTxnForm.newbalanceOrig}
-                        onChange={(e) => setTestTxnForm({...testTxnForm, newbalanceOrig: parseFloat(e.target.value) || 0})}
-                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500 font-mono"
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-indigo-500"
                       />
                     </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="text-xs font-semibold text-slate-300 block mb-1">Recipient Old Balance ($)</label>
+                      <label className="text-xs font-semibold text-slate-300 block mb-1">Recipient Account ID</label>
                       <input
-                        type="number"
-                        step="0.01"
-                        value={testTxnForm.oldbalanceDest}
-                        onChange={(e) => setTestTxnForm({...testTxnForm, oldbalanceDest: parseFloat(e.target.value) || 0})}
-                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500 font-mono"
+                        type="text"
+                        value={testTxnForm.nameDest}
+                        onChange={(e) => setTestTxnForm({...testTxnForm, nameDest: e.target.value})}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-indigo-500"
                       />
                     </div>
 
                     <div>
-                      <label className="text-xs font-semibold text-slate-300 block mb-1">Recipient New Balance ($)</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={testTxnForm.newbalanceDest}
-                        onChange={(e) => setTestTxnForm({...testTxnForm, newbalanceDest: parseFloat(e.target.value) || 0})}
-                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500 font-mono"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="text-xs font-semibold text-slate-300 block mb-1">Sender Account Age (Days)</label>
+                      <label className="text-xs font-semibold text-slate-300 block mb-1">Account Age (Days)</label>
                       <input
                         type="number"
                         value={testTxnForm.account_age_days}
                         onChange={(e) => setTestTxnForm({...testTxnForm, account_age_days: parseInt(e.target.value) || 0})}
-                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="text-xs font-semibold text-slate-300 block mb-1">Hour of Day (1-24h)</label>
-                      <input
-                        type="number"
-                        value={testTxnForm.step}
-                        onChange={(e) => setTestTxnForm({...testTxnForm, step: parseInt(e.target.value) || 1})}
-                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-indigo-500"
                       />
                     </div>
                   </div>
@@ -622,14 +956,14 @@ export default function App() {
                   <button
                     type="submit"
                     disabled={scoringLoading}
-                    className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-sm shadow-lg shadow-indigo-500/25 flex items-center justify-center space-x-2 transition-all"
+                    className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-xs shadow-lg shadow-indigo-500/25 flex items-center justify-center space-x-2 transition-all"
                   >
                     {scoringLoading ? (
-                      <RefreshCw className="w-5 h-5 animate-spin" />
+                      <RefreshCw className="w-4 h-4 animate-spin" />
                     ) : (
                       <>
-                        <Send className="w-4 h-4" />
-                        <span>Run Real-Time XGBoost + SHAP Analysis</span>
+                        <Zap className="w-4 h-4" />
+                        <span>Run XGBoost + SHAP Scoring Engine</span>
                       </>
                     )}
                   </button>
@@ -637,220 +971,252 @@ export default function App() {
               </div>
             </div>
 
-            {/* Results Output & SHAP Explanations */}
+            {/* Right Side: Scoring Results Card */}
             <div className="lg:col-span-6 space-y-6">
               {scoringResult ? (
-                <div className="glass-card p-6 rounded-2xl border border-indigo-500/30 space-y-6 animate-fadeIn">
-                  {/* Score Gauge Header */}
-                  <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+                <div className="glass-card p-6 rounded-2xl border border-indigo-500/30 space-y-5">
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                     <div>
-                      <span className="text-xs font-mono text-slate-400">TRANSACTION RECORD</span>
-                      <h4 className="text-xl font-bold text-white">{scoringResult.id}</h4>
+                      <span className="text-xs font-mono text-indigo-400">ANALYSIS REPORT</span>
+                      <h4 className="text-lg font-bold text-white">{scoringResult.id}</h4>
                     </div>
-                    <div>{getRiskBadge(scoringResult.risk_level, scoringResult.risk_score)}</div>
+                    <div className="flex items-center space-x-2">
+                      {getRiskBadge(scoringResult.risk_level, scoringResult.fraud_probability)}
+                      <button
+                        onClick={() => exportSHAPReportJSON(scoringResult)}
+                        className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs"
+                        title="Export JSON Report"
+                      >
+                        <Download className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
 
-                  {/* Progress Bar */}
                   <div className="space-y-2">
-                    <div className="flex justify-between text-xs font-semibold">
-                      <span className="text-slate-300">Fraud Probability Score</span>
-                      <span className={scoringResult.risk_score >= 0.50 ? 'text-rose-400 font-bold' : 'text-emerald-400 font-bold'}>
-                        {(scoringResult.risk_score * 100).toFixed(2)}%
-                      </span>
-                    </div>
-                    <div className="w-full h-3 bg-slate-900 rounded-full overflow-hidden p-0.5 border border-slate-800">
-                      <div
-                        className={`h-full rounded-full transition-all duration-700 ${
-                          scoringResult.risk_score >= 0.70
-                            ? 'bg-gradient-to-r from-rose-500 to-red-600'
-                            : scoringResult.risk_score >= 0.40
-                            ? 'bg-gradient-to-r from-amber-500 to-yellow-500'
-                            : 'bg-gradient-to-r from-emerald-500 to-teal-500'
-                        }`}
-                        style={{ width: `${Math.max(5, scoringResult.risk_score * 100)}%` }}
-                      ></div>
-                    </div>
-                  </div>
-
-                  {/* SHAP Plain English Explanations */}
-                  <div className="space-y-3">
-                    <h5 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-                      <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-                      SHAP Explainability Insights (Plain-English)
-                    </h5>
-
-                    <div className="space-y-2">
-                      {scoringResult.explanations?.map((exp, i) => (
-                        <div key={i} className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 flex items-start space-x-2.5">
-                          <CheckCircle className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
-                          <span className="text-xs text-slate-200 leading-relaxed">{exp}</span>
+                    <p className="text-xs font-bold text-indigo-300 uppercase tracking-wider">Natural Language Explanations:</p>
+                    <div className="space-y-1.5">
+                      {scoringResult.explanations?.map((exp, idx) => (
+                        <div key={idx} className="flex items-start space-x-2 text-xs text-slate-200 bg-slate-900/80 p-2.5 rounded-lg border border-slate-800">
+                          <span className="text-indigo-400 font-bold">•</span>
+                          <span>{exp}</span>
                         </div>
                       ))}
                     </div>
                   </div>
 
-                  {/* Top SHAP Feature Contributions Chart */}
-                  <div className="space-y-3 border-t border-slate-800 pt-4">
-                    <h5 className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                      Top Feature Attributions (|SHAP Value|)
-                    </h5>
-
-                    <div className="space-y-2.5">
-                      {scoringResult.shap_breakdown?.slice(0, 5).map((item, idx) => (
-                        <div key={idx} className="space-y-1">
-                          <div className="flex justify-between text-xs">
-                            <span className="text-slate-300 font-medium">{item.feature_name}</span>
-                            <span className={`font-mono font-semibold ${item.shap_value > 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
-                              {item.shap_value > 0 ? `+${item.shap_value.toFixed(4)}` : item.shap_value.toFixed(4)}
-                            </span>
-                          </div>
-                          <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden">
-                            <div
-                              className={`h-full rounded-full ${item.shap_value > 0 ? 'bg-rose-500' : 'bg-emerald-500'}`}
-                              style={{ width: `${Math.min(100, Math.abs(item.shap_value) * 150)}%` }}
-                            ></div>
-                          </div>
+                  <div className="space-y-2">
+                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Top SHAP Feature Attributions:</p>
+                    <div className="space-y-1.5">
+                      {scoringResult.shap_breakdown?.map((item, idx) => (
+                        <div key={idx} className="flex justify-between items-center text-xs bg-slate-900 p-2.5 rounded-lg border border-slate-800">
+                          <span className="text-slate-300 font-medium">{item.feature_name}</span>
+                          <span className={item.shap_value > 0 ? 'text-rose-400 font-mono font-bold' : 'text-emerald-400 font-mono font-bold'}>
+                            {item.shap_value > 0 ? `+${item.shap_value.toFixed(4)}` : item.shap_value.toFixed(4)}
+                          </span>
                         </div>
                       ))}
                     </div>
                   </div>
                 </div>
               ) : (
-                <div className="glass-card p-12 rounded-2xl border border-slate-800 flex flex-col items-center justify-center text-center space-y-4">
-                  <div className="w-12 h-12 rounded-full bg-slate-900 flex items-center justify-center border border-slate-800 text-slate-500">
-                    <Activity className="w-6 h-6" />
+                <div className="glass-card p-12 rounded-2xl border border-slate-800 text-center space-y-3">
+                  <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center mx-auto">
+                    <Sparkles className="w-6 h-6" />
                   </div>
-                  <div>
-                    <h4 className="text-base font-semibold text-white">No Simulation Executed Yet</h4>
-                    <p className="text-xs text-slate-400 max-w-sm mt-1">Fill out the transaction form or select a preset to generate a real-time XGBoost + SHAP explanation report.</p>
-                  </div>
+                  <h4 className="text-base font-bold text-white">Ready to Score Transaction</h4>
+                  <p className="text-xs text-slate-400 max-w-sm mx-auto">Select a quick preset or fill in transaction details to test model inference and SHAP explainability.</p>
                 </div>
               )}
             </div>
           </div>
         )}
 
-        {/* TAB 3: TRANSACTIONS TABLE */}
+        {/* TAB 3: SCORED TRANSACTIONS */}
         {activeTab === 'transactions' && (
-          <div className="glass-card rounded-2xl border border-slate-800 p-6 space-y-6">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
-                <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                  <ShieldCheck className="w-5 h-5 text-indigo-400" />
-                  Scored Transactions Registry
+                <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                  <ShieldCheck className="w-6 h-6 text-indigo-400" />
+                  Scored Transactions Audit Log
                 </h3>
-                <p className="text-xs text-slate-400">Click any row to expand natural language SHAP explanation breakdown.</p>
+                <p className="text-xs text-slate-400">All historical transactions with SHAP explanations and analyst quick controls</p>
               </div>
 
-              <div className="flex items-center space-x-3 w-full sm:w-auto">
-                <div className="relative flex-1 sm:w-64">
-                  <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-500" />
-                  <input
-                    type="text"
-                    placeholder="Search by ID or type..."
-                    value={txnSearch}
-                    onChange={(e) => setTxnSearch(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg pl-9 pr-3 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-
-                <label className="flex items-center space-x-2 text-xs text-slate-300 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={filterFlagged}
-                    onChange={(e) => setFilterFlagged(e.target.checked)}
-                    className="rounded bg-slate-900 border-slate-700 text-indigo-500 focus:ring-0"
-                  />
-                  <span>Flagged Only</span>
-                </label>
+              <div className="flex items-center space-x-3">
+                <button
+                  onClick={exportTransactionsCSV}
+                  className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow-lg shadow-indigo-500/20 flex items-center space-x-2 transition-all"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>Export CSV Log</span>
+                </button>
               </div>
             </div>
 
-            {/* Table */}
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs text-slate-300">
-                <thead className="bg-slate-900/80 text-slate-400 uppercase font-mono border-b border-slate-800">
-                  <tr>
-                    <th className="py-3 px-4">Txn ID</th>
-                    <th className="py-3 px-4">Type</th>
-                    <th className="py-3 px-4">Amount ($)</th>
-                    <th className="py-3 px-4">Sender ID</th>
-                    <th className="py-3 px-4">Risk Status</th>
-                    <th className="py-3 px-4">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/60">
-                  {filteredTransactions.length > 0 ? (
-                    filteredTransactions.map((t) => {
-                      const isExpanded = expandedTxnId === t.id;
-                      return (
-                        <React.Fragment key={t.id}>
-                          <tr
-                            onClick={() => setExpandedTxnId(isExpanded ? null : t.id)}
-                            className="hover:bg-slate-900/60 cursor-pointer transition-colors"
-                          >
-                            <td className="py-3.5 px-4 font-mono font-semibold text-indigo-300">{t.id}</td>
-                            <td className="py-3.5 px-4">
-                              <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-200 font-semibold">{t.type}</span>
-                            </td>
-                            <td className="py-3.5 px-4 font-bold text-white">${t.amount.toLocaleString()}</td>
-                            <td className="py-3.5 px-4 font-mono text-slate-400">{t.nameOrig}</td>
-                            <td className="py-3.5 px-4">{getRiskBadge(t.risk_level, t.risk_score)}</td>
-                            <td className="py-3.5 px-4">
-                              <button className="text-slate-400 hover:text-indigo-400 flex items-center gap-1 font-medium">
-                                {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                                {isExpanded ? 'Hide' : 'Explain'}
-                              </button>
-                            </td>
-                          </tr>
+            {/* Filter Pills & Search Bar */}
+            <div className="glass-card p-4 rounded-2xl border border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-semibold text-slate-400 mr-1">Risk Filter:</span>
+                {['ALL', 'HIGH', 'MEDIUM', 'LOW', 'FLAGGED'].map((lvl) => (
+                  <button
+                    key={lvl}
+                    onClick={() => setFilterRiskLevel(lvl)}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                      filterRiskLevel === lvl
+                        ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/30'
+                        : 'bg-slate-900 text-slate-400 hover:bg-slate-800 hover:text-white border border-slate-800'
+                    }`}
+                  >
+                    {lvl}
+                  </button>
+                ))}
+              </div>
 
-                          {/* Expanded Row Details */}
-                          {isExpanded && (
-                            <tr className="bg-slate-900/90 border-b border-slate-800">
-                              <td colSpan="6" className="p-4 space-y-3">
-                                <div className="p-4 rounded-xl bg-slate-950 border border-indigo-500/20 space-y-3">
-                                  <h5 className="text-xs font-bold text-indigo-300 uppercase tracking-wider flex items-center gap-2">
-                                    <Sparkles className="w-4 h-4 text-indigo-400" />
-                                    Plain-English SHAP Explanation (Why this score was given)
-                                  </h5>
+              <div className="relative min-w-[240px]">
+                <Search className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
+                <input
+                  type="text"
+                  placeholder="Search ID, sender, recipient..."
+                  value={txnSearch}
+                  onChange={(e) => setTxnSearch(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+            </div>
 
-                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                    <div className="space-y-2">
-                                      <p className="text-xs font-semibold text-slate-400">Natural Language Sentences:</p>
-                                      {t.explanations?.map((exp, idx) => (
-                                        <div key={idx} className="flex items-start space-x-2 text-xs text-slate-200">
-                                          <span className="text-indigo-400 font-bold">•</span>
-                                          <span>{exp}</span>
-                                        </div>
-                                      ))}
-                                    </div>
+            {/* Transactions Table */}
+            <div className="glass-card rounded-2xl border border-slate-800 overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs text-slate-300">
+                  <thead className="bg-slate-900/90 border-b border-slate-800 uppercase text-[10px] font-bold tracking-wider text-slate-400">
+                    <tr>
+                      <th className="p-4">Transaction ID</th>
+                      <th className="p-4">Type</th>
+                      <th className="p-4">Amount</th>
+                      <th className="p-4">Sender / Recipient</th>
+                      <th className="p-4">Risk Level</th>
+                      <th className="p-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60">
+                    {filteredTransactions.length > 0 ? (
+                      filteredTransactions.map((t) => {
+                        const isExpanded = expandedTxnId === t.id;
+                        const isFrozen = frozenAccounts.has(t.nameOrig);
+                        const isEscalated = escalatedTxns.has(t.id);
+                        const overrideVerdict = verdictOverrides[t.id];
 
-                                    <div className="space-y-2">
-                                      <p className="text-xs font-semibold text-slate-400">Top SHAP Feature Attributions:</p>
-                                      {t.shap_breakdown?.slice(0, 3).map((item, idx) => (
-                                        <div key={idx} className="flex justify-between text-xs bg-slate-900 p-2 rounded border border-slate-800">
-                                          <span className="text-slate-300">{item.feature_name}</span>
-                                          <span className={item.shap_value > 0 ? 'text-rose-400 font-mono font-semibold' : 'text-emerald-400 font-mono font-semibold'}>
-                                            {item.shap_value > 0 ? `+${item.shap_value.toFixed(4)}` : item.shap_value.toFixed(4)}
-                                          </span>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </div>
+                        return (
+                          <React.Fragment key={t.id}>
+                            <tr className="hover:bg-slate-900/50 transition-colors">
+                              <td className="p-4 font-mono font-bold text-white flex items-center gap-2">
+                                <span>{t.id}</span>
+                                {isFrozen && <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-400 font-bold border border-rose-500/30">FROZEN</span>}
+                                {isEscalated && <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 font-bold border border-purple-500/30">ESCALATED</span>}
+                              </td>
+                              <td className="p-4 font-semibold">{t.type}</td>
+                              <td className="p-4 font-mono font-bold text-white">${t.amount?.toLocaleString()}</td>
+                              <td className="p-4 font-mono text-slate-400">
+                                <div>From: <span className="text-slate-200">{t.nameOrig}</span></div>
+                                <div>To: <span className="text-slate-200">{t.nameDest}</span></div>
+                              </td>
+                              <td className="p-4">
+                                {overrideVerdict ? (
+                                  <span className="px-2 py-0.5 rounded text-xs font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                                    {overrideVerdict}
+                                  </span>
+                                ) : (
+                                  getRiskBadge(t.risk_level, t.fraud_probability)
+                                )}
+                              </td>
+                              <td className="p-4 text-right">
+                                <div className="flex items-center justify-end space-x-2">
+                                  <button
+                                    onClick={() => handleFreezeAccount(t.nameOrig)}
+                                    className={`px-2.5 py-1 rounded text-[11px] font-bold transition-all ${
+                                      isFrozen
+                                        ? 'bg-rose-600 text-white'
+                                        : 'bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                                    }`}
+                                  >
+                                    {isFrozen ? 'Unfreeze' : 'Freeze'}
+                                  </button>
+
+                                  <button
+                                    onClick={() => handleToggleVerdict(t.id)}
+                                    className="px-2.5 py-1 rounded text-[11px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 transition-all border border-slate-700"
+                                  >
+                                    Verdict
+                                  </button>
+
+                                  <button
+                                    onClick={() => setExpandedTxnId(isExpanded ? null : t.id)}
+                                    className="px-2.5 py-1 rounded text-[11px] font-bold bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 flex items-center gap-1"
+                                  >
+                                    {isExpanded ? 'Hide' : 'Explain'}
+                                  </button>
                                 </div>
                               </td>
                             </tr>
-                          )}
-                        </React.Fragment>
-                      );
-                    })
-                  ) : (
-                    <tr>
-                      <td colSpan="6" className="py-8 text-center text-slate-500">No transactions matched your search query.</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+
+                            {/* Expanded SHAP Breakdown Row */}
+                            {isExpanded && (
+                              <tr className="bg-slate-900/90 border-b border-slate-800">
+                                <td colSpan="6" className="p-4">
+                                  <div className="p-4 rounded-xl bg-slate-950 border border-indigo-500/20 space-y-3">
+                                    <div className="flex items-center justify-between">
+                                      <h5 className="text-xs font-bold text-indigo-300 uppercase tracking-wider flex items-center gap-2">
+                                        <Sparkles className="w-4 h-4 text-indigo-400" />
+                                        Plain-English SHAP Feature Attribution
+                                      </h5>
+                                      <button
+                                        onClick={() => exportSHAPReportJSON(t)}
+                                        className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1 font-semibold"
+                                      >
+                                        <Download className="w-3.5 h-3.5" />
+                                        <span>Download Audit JSON</span>
+                                      </button>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                      <div className="space-y-2">
+                                        <p className="text-xs font-semibold text-slate-400">Natural Language Explanations:</p>
+                                        {t.explanations?.map((exp, idx) => (
+                                          <div key={idx} className="flex items-start space-x-2 text-xs text-slate-200">
+                                            <span className="text-indigo-400 font-bold">•</span>
+                                            <span>{exp}</span>
+                                          </div>
+                                        ))}
+                                      </div>
+
+                                      <div className="space-y-2">
+                                        <p className="text-xs font-semibold text-slate-400">Top SHAP Feature Attributions:</p>
+                                        {t.shap_breakdown?.slice(0, 3).map((item, idx) => (
+                                          <div key={idx} className="flex justify-between text-xs bg-slate-900 p-2 rounded border border-slate-800">
+                                            <span className="text-slate-300">{item.feature_name}</span>
+                                            <span className={item.shap_value > 0 ? 'text-rose-400 font-mono font-bold' : 'text-emerald-400 font-mono font-bold'}>
+                                              {item.shap_value > 0 ? `+${item.shap_value.toFixed(4)}` : item.shap_value.toFixed(4)}
+                                            </span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
+                        );
+                      })
+                    ) : (
+                      <tr>
+                        <td colSpan="6" className="py-8 text-center text-slate-500">No transactions matched your search query.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         )}
@@ -858,7 +1224,6 @@ export default function App() {
         {/* TAB 4: VOICE SCAM INSPECTOR */}
         {activeTab === 'calls' && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-            {/* Call Form */}
             <div className="lg:col-span-5 space-y-6">
               <div className="glass-card p-6 rounded-2xl border border-slate-800 space-y-6">
                 <div>
@@ -874,21 +1239,28 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => applyCallPreset('otp_phishing')}
-                    className="text-xs px-2.5 py-1 rounded bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 transition-colors font-medium"
+                    className="text-xs px-2.5 py-1 rounded bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 transition-colors font-semibold"
                   >
-                    🚨 OTP Phishing Call
+                    🚨 OTP Phishing
                   </button>
                   <button
                     type="button"
                     onClick={() => applyCallPreset('impersonation_threat')}
-                    className="text-xs px-2.5 py-1 rounded bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 transition-colors font-medium"
+                    className="text-xs px-2.5 py-1 rounded bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 transition-colors font-semibold"
                   >
-                    ⚠️ Police Arrest Threat
+                    ⚠️ Police Threat
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyCallPreset('sim_swap')}
+                    className="text-xs px-2.5 py-1 rounded bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 border border-purple-500/30 transition-colors font-semibold"
+                  >
+                    📲 SIM Swap
                   </button>
                   <button
                     type="button"
                     onClick={() => applyCallPreset('legit_call')}
-                    className="text-xs px-2.5 py-1 rounded bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 transition-colors font-medium"
+                    className="text-xs px-2.5 py-1 rounded bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 transition-colors font-semibold"
                   >
                     ✅ Normal Call
                   </button>
@@ -901,7 +1273,7 @@ export default function App() {
                       type="text"
                       value={testCallForm.caller_identity}
                       onChange={(e) => setTestCallForm({...testCallForm, caller_identity: e.target.value})}
-                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500"
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
                     />
                   </div>
 
@@ -911,7 +1283,7 @@ export default function App() {
                       type="text"
                       value={testCallForm.phone_number}
                       onChange={(e) => setTestCallForm({...testCallForm, phone_number: e.target.value})}
-                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500 font-mono"
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-amber-500"
                     />
                   </div>
 
@@ -928,10 +1300,10 @@ export default function App() {
                   <button
                     type="submit"
                     disabled={callLoading}
-                    className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-bold text-sm shadow-lg shadow-amber-500/25 flex items-center justify-center space-x-2 transition-all"
+                    className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-bold text-xs shadow-lg shadow-amber-500/25 flex items-center justify-center space-x-2 transition-all"
                   >
                     {callLoading ? (
-                      <RefreshCw className="w-5 h-5 animate-spin" />
+                      <RefreshCw className="w-4 h-4 animate-spin" />
                     ) : (
                       <>
                         <PhoneCall className="w-4 h-4" />
@@ -943,7 +1315,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Call Logs & Analysis Result */}
             <div className="lg:col-span-7 space-y-6">
               {callResult && (
                 <div className="glass-card p-6 rounded-2xl border border-amber-500/30 space-y-4">
@@ -974,12 +1345,22 @@ export default function App() {
                 </div>
               )}
 
-              {/* History Table */}
+              {/* Voice Call History Log */}
               <div className="glass-card rounded-2xl border border-slate-800 p-6 space-y-4">
-                <h4 className="text-base font-bold text-white flex items-center gap-2">
-                  <PhoneCall className="w-4 h-4 text-amber-400" />
-                  Voice Call History Log
-                </h4>
+                <div className="flex items-center justify-between">
+                  <h4 className="text-base font-bold text-white flex items-center gap-2">
+                    <PhoneCall className="w-4 h-4 text-amber-400" />
+                    Voice Call History Log
+                  </h4>
+
+                  <button
+                    onClick={exportCallsCSV}
+                    className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-amber-300 flex items-center gap-1.5 transition-colors border border-slate-700"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Export Call CSV</span>
+                  </button>
+                </div>
 
                 <div className="space-y-3">
                   {calls.map((c) => (
@@ -1001,6 +1382,15 @@ export default function App() {
               </div>
             </div>
           </div>
+        )}
+
+        {/* TAB 5: ANALYST PROFILE & SETTINGS */}
+        {activeTab === 'profile' && (
+          <ProfileView
+            currentUser={currentUser}
+            onLogout={() => { setCurrentUser(null); showToast({ type: 'info', title: 'Signed Out', message: 'You have logged out' }); }}
+            showToast={showToast}
+          />
         )}
 
       </main>
