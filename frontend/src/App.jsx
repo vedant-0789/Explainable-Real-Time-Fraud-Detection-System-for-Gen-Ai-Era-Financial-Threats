@@ -36,7 +36,7 @@ import LoginPage from './components/LoginPage';
 import ProfileView from './components/ProfileView';
 import Toast from './components/Toast';
 
-const API_BASE_URL = 'http://127.0.0.1:8000';
+const API_BASE_URL = 'http://127.0.0.1:8080';
 
 export default function App() {
   // Authentication State
